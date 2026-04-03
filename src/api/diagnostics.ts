@@ -3,10 +3,10 @@
  */
 import type { ActiveClaimRow } from "../types/diagnostics";
 
-// Backend URL. Default: localhost:8001 (port 8000 reserved). Set VITE_API_URL to override.
+// Backend URL. Empty string = use Vite proxy (dev). Set VITE_API_URL for direct access.
 const API_BASE =
-  (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL) ||
-  "http://localhost:8001";
+  (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_API_URL?: string } }).env?.VITE_API_URL) ??
+  "";
 
 export { API_BASE };
 
