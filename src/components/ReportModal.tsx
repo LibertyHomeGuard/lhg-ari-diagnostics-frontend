@@ -546,7 +546,7 @@ export default function ReportModal({
       // The backend finishes and caches to DynamoDB regardless — auto-retry once.
       setRetrying(true);
       try {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 8000));
         const data = await fetchConversationReport(convId);
         setReportData(data);
         if (convId === conversationId) onReportLoaded?.(data);
