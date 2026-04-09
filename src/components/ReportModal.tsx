@@ -46,20 +46,11 @@ function statusColor(s: ReportStatus): string {
   return s === "pass" ? "#22c55e" : s === "warning" ? "#f59e0b" : "#ef4444";
 }
 
-function scoreToStatus(score: number | null | undefined): ReportStatus {
-  if (score == null) return "fail";
-  return score >= 80 ? "pass" : score >= 60 ? "warning" : "fail";
-}
-
 function statusRingColor(s: ReportStatus): string {
   return s === "pass" ? "#22c55e" : s === "warning" ? "#f59e0b" : "#ef4444";
 }
 
 // ── Shared UI primitives ──────────────────────────────────────────────────────
-
-function Sk({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded bg-neutral-800 ${className}`} />;
-}
 
 function SeverityPill({ severity }: { severity: Severity }) {
   const cls =
@@ -225,13 +216,7 @@ function FlagsSection({ flags }: { flags: ReportFlag[] }) {
 
 // ── Section: Agent card ───────────────────────────────────────────────────────
 
-function AgentCard({
-  agent,
-  onViewReport,
-}: {
-  agent: AgentReport;
-  onViewReport?: (convId: string) => void;
-}) {
+function AgentCard({ agent }: { agent: AgentReport }) {
   const ringColor = statusRingColor(agent.status);
   return (
     <div className="flex flex-col rounded-lg border border-neutral-700/80 bg-neutral-900/60 p-4">
