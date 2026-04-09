@@ -478,11 +478,13 @@ function ValidationReportTab({ data }: { data: ReportData }) {
 
 // ── Loading / error states ────────────────────────────────────────────────────
 
-function ModalSkeleton() {
+function ModalSkeleton({ retrying }: { retrying?: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-24">
       <div className="h-10 w-10 animate-spin rounded-full border-4 border-neutral-700 border-t-teal-500" />
-      <p className="text-sm text-neutral-500">Loading report…</p>
+      <p className="text-sm text-neutral-500">
+        {retrying ? "Retrieving report…" : "Generating report… this may take up to 30 seconds on first load"}
+      </p>
     </div>
   );
 }
@@ -527,20 +529,33 @@ export default function ReportModal({
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
   const [loadedConvId, setLoadedConvId] = useState<string>(conversationId);
+  const [retrying, setRetrying] = useState(false);
 
   const loadReport = useCallback(async (convId: string) => {
     setReportLoading(true);
     setReportError(null);
     setReportData(null);
+    setRetrying(false);
     setLoadedConvId(convId);
     try {
       const data = await fetchConversationReport(convId);
       setReportData(data);
       if (convId === conversationId) onReportLoaded?.(data);
-    } catch (e) {
-      setReportError(e instanceof Error ? e.message : "Unknown error");
+    } catch {
+      // First attempt failed (likely API Gateway 29s timeout while backend was generating).
+      // The backend finishes and caches to DynamoDB regardless — auto-retry once.
+      setRetrying(true);
+      try {
+        await new Promise((r) => setTimeout(r, 2000));
+        const data = await fetchConversationReport(convId);
+        setReportData(data);
+        if (convId === conversationId) onReportLoaded?.(data);
+      } catch (e2) {
+        setReportError(e2 instanceof Error ? e2.message : "Unknown error");
+      }
     } finally {
       setReportLoading(false);
+      setRetrying(false);
     }
   }, [conversationId, onReportLoaded]);
 
@@ -583,7 +598,7 @@ export default function ReportModal({
           </div>
 
           {/* Content */}
-          {reportLoading && <ModalSkeleton />}
+          {reportLoading && <ModalSkeleton retrying={retrying} />}
           {reportError && !reportLoading && (
             <ModalError message={reportError} onRetry={() => loadReport(loadedConvId)} />
           )}
