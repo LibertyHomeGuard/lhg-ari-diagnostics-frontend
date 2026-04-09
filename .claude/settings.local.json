@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Goutham/Desktop/LHG Projects/LHG Projects/Production code/**)",
+      "Bash(xargs wc:*)",
+      "Bash(python -)",
+      "Bash(python -c ':*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Goutham\\Desktop\\LHG Projects\\LHG Projects\\Production code\\Ari-Diag-backend\\backend\\app\\services"
+    ]
+  }
+}

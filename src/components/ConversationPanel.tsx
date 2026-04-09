@@ -6,7 +6,9 @@ import type {
   TranscriptTurn,
 } from "../services/elevenLabsService";
 import type { NegotiationAttempt, NegotiationPartResult, PlumbingPartRow } from "../types/diagnostics";
+import type { ReportData } from "../types/report";
 import PartsTable from "./PartsTable";
+import ReportModal from "./ReportModal";
 
 type Tab = "transcript" | "diagnostic";
 
@@ -212,6 +214,8 @@ function ConversationCard({
   onLoadTranscript: (id: string) => void;
 }) {
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [cachedReport, setCachedReport] = useState<ReportData | null>(null);
   const transcriptEntry = transcriptCache[conv.conversation_id];
 
   function handleToggleTranscript() {
@@ -238,32 +242,165 @@ function ConversationCard({
       ) : (
         <p className="mb-3 text-sm italic text-neutral-500">No summary available</p>
       )}
-      <button
-        type="button"
-        onClick={handleToggleTranscript}
-        className="inline-flex items-center gap-1.5 rounded-md border border-neutral-600 bg-neutral-700/50 px-3 py-1.5 text-xs font-medium text-neutral-200 transition hover:bg-neutral-700 hover:text-white"
-      >
-        <svg
-          className={`h-3.5 w-3.5 transition-transform ${showTranscript ? "rotate-180" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={handleToggleTranscript}
+          className="inline-flex items-center gap-1.5 rounded-md border border-neutral-600 bg-neutral-700/50 px-3 py-1.5 text-xs font-medium text-neutral-200 transition hover:bg-neutral-700 hover:text-white"
         >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"
-          />
-        </svg>
-        {showTranscript ? "Hide Transcript" : "View Transcript"}
-      </button>
+          <svg
+            className={`h-3.5 w-3.5 transition-transform ${showTranscript ? "rotate-180" : ""}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-3 3v-3z"
+            />
+          </svg>
+          {showTranscript ? "Hide Transcript" : "View Transcript"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowReport(true)}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-600/50 bg-amber-600/20 px-3 py-1.5 text-xs font-medium text-amber-300 transition hover:bg-amber-600/30 hover:text-amber-200"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            />
+          </svg>
+          Report
+        </button>
+      </div>
       {showTranscript && <TranscriptView entry={transcriptEntry} />}
+      {showReport && (
+        <ReportModal
+          conversationId={conv.conversation_id}
+          cachedData={cachedReport}
+          onReportLoaded={(data) => setCachedReport(data)}
+          onClose={() => setShowReport(false)}
+        />
+      )}
     </div>
   );
 }
 
 // ── Transcript tab ────────────────────────────────────────────────────────────
+
+// Duration preset chips — label, min seconds, max seconds (null = no limit)
+const DURATION_PRESETS: { label: string; min: number; max: number | null }[] = [
+  { label: "All",    min: 0,   max: null },
+  { label: "< 30s",  min: 0,   max: 30   },
+  { label: "30s–2m", min: 30,  max: 120  },
+  { label: "2m–5m",  min: 120, max: 300  },
+  { label: "> 5m",   min: 300, max: null },
+];
+
+// Call status options
+const STATUS_OPTIONS = ["all", "done", "in-progress", "processing", "failed"] as const;
+
+function CallFilters({
+  total,
+  filtered,
+  minSecs,
+  maxSecs,
+  statusFilter,
+  onMinChange,
+  onMaxChange,
+  onPreset,
+  onStatusChange,
+  onReset,
+}: {
+  total: number;
+  filtered: number;
+  minSecs: string;
+  maxSecs: string;
+  statusFilter: string;
+  onMinChange: (v: string) => void;
+  onMaxChange: (v: string) => void;
+  onPreset: (min: number, max: number | null) => void;
+  onStatusChange: (v: string) => void;
+  onReset: () => void;
+}) {
+  const isDirty = minSecs !== "" || maxSecs !== "" || statusFilter !== "all";
+
+  return (
+    <div className="rounded-lg border border-neutral-700/60 bg-neutral-800/30 p-3 space-y-2.5">
+      {/* Duration presets */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-neutral-500 mr-1">Duration</span>
+        {DURATION_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            onClick={() => onPreset(p.min, p.max)}
+            className="rounded-full border border-neutral-600 bg-neutral-800 px-2.5 py-0.5 text-xs text-neutral-300 transition hover:border-teal-500 hover:text-teal-300"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Custom min/max inputs + status filter */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-neutral-500">Custom</span>
+        <input
+          type="number"
+          placeholder="Min (s)"
+          min={0}
+          value={minSecs}
+          onChange={(e) => onMinChange(e.target.value)}
+          className="w-20 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-white placeholder-neutral-600 focus:border-teal-500 focus:outline-none"
+        />
+        <span className="text-xs text-neutral-600">–</span>
+        <input
+          type="number"
+          placeholder="Max (s)"
+          min={0}
+          value={maxSecs}
+          onChange={(e) => onMaxChange(e.target.value)}
+          className="w-20 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-white placeholder-neutral-600 focus:border-teal-500 focus:outline-none"
+        />
+
+        <span className="text-xs text-neutral-500 ml-2">Status</span>
+        <select
+          value={statusFilter}
+          onChange={(e) => onStatusChange(e.target.value)}
+          className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-white focus:border-teal-500 focus:outline-none"
+        >
+          {STATUS_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s === "all" ? "All statuses" : s.charAt(0).toUpperCase() + s.slice(1)}
+            </option>
+          ))}
+        </select>
+
+        {isDirty && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="ml-auto text-xs text-neutral-500 hover:text-neutral-300 underline"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+
+      {/* Result count */}
+      <p className="text-xs text-neutral-500">
+        Showing <span className="text-white font-medium">{filtered}</span> of{" "}
+        <span className="text-white font-medium">{total}</span> calls
+      </p>
+    </div>
+  );
+}
 
 function TranscriptTab({
   convEntry,
@@ -276,6 +413,21 @@ function TranscriptTab({
   onLoadTranscript: (id: string) => void;
   phoneNumber: string | undefined;
 }) {
+  const [minSecs, setMinSecs] = useState("");
+  const [maxSecs, setMaxSecs] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  function handlePreset(min: number, max: number | null) {
+    setMinSecs(min === 0 && max === null ? "" : String(min));
+    setMaxSecs(max === null ? "" : String(max));
+  }
+
+  function handleReset() {
+    setMinSecs("");
+    setMaxSecs("");
+    setStatusFilter("all");
+  }
+
   if (!phoneNumber) {
     return (
       <div className="px-6 py-6 text-center text-sm text-neutral-500">
@@ -308,19 +460,46 @@ function TranscriptTab({
       </div>
     );
   }
+
+  const minVal = minSecs !== "" ? Number(minSecs) : 0;
+  const maxVal = maxSecs !== "" ? Number(maxSecs) : Infinity;
+
+  const filtered = convEntry.data.filter((c) => {
+    const dur = c.call_duration_secs ?? 0;
+    const durOk = dur >= minVal && dur <= maxVal;
+    const statusOk = statusFilter === "all" || c.status === statusFilter;
+    return durOk && statusOk;
+  });
+
   return (
     <div className="space-y-3 p-6">
-      <p className="text-xs font-medium uppercase tracking-wider text-neutral-500">
-        {convEntry.data.length} call{convEntry.data.length !== 1 ? "s" : ""}
-      </p>
-      {convEntry.data.map((conv) => (
-        <ConversationCard
-          key={conv.conversation_id}
-          conv={conv}
-          transcriptCache={transcriptCache}
-          onLoadTranscript={onLoadTranscript}
-        />
-      ))}
+      <CallFilters
+        total={convEntry.data.length}
+        filtered={filtered.length}
+        minSecs={minSecs}
+        maxSecs={maxSecs}
+        statusFilter={statusFilter}
+        onMinChange={setMinSecs}
+        onMaxChange={setMaxSecs}
+        onPreset={handlePreset}
+        onStatusChange={setStatusFilter}
+        onReset={handleReset}
+      />
+
+      {filtered.length === 0 ? (
+        <div className="py-6 text-center text-sm text-neutral-500">
+          No calls match the current filters.
+        </div>
+      ) : (
+        filtered.map((conv) => (
+          <ConversationCard
+            key={conv.conversation_id}
+            conv={conv}
+            transcriptCache={transcriptCache}
+            onLoadTranscript={onLoadTranscript}
+          />
+        ))
+      )}
     </div>
   );
 }
