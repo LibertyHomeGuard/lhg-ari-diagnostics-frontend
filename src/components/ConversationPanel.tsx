@@ -82,9 +82,7 @@ function extractPD(record: Record<string, unknown> | undefined): Record<string, 
   >;
 }
 
-function extractParts(record: Record<string, unknown> | undefined): PlumbingPartRow[] {
-  if (!record) return [];
-  const raw = ((record.plumbingParts ?? record.plumbing_parts) ?? []) as unknown[];
+function mapPartsArray(raw: unknown[]): PlumbingPartRow[] {
   return raw.map((p) => {
     if (!p || typeof p !== "object") return {};
     const r = p as Record<string, unknown>;
@@ -95,6 +93,11 @@ function extractParts(record: Record<string, unknown> | undefined): PlumbingPart
       location_of_repair: str(r.location_of_repair ?? r.locationOfRepair) || undefined,
     };
   });
+}
+
+function extractParts(record: Record<string, unknown> | undefined): PlumbingPartRow[] {
+  if (!record) return [];
+  return mapPartsArray(((record.plumbingParts ?? record.plumbing_parts) ?? []) as unknown[]);
 }
 
 function extractNegParts(d: Record<string, unknown>): NegotiationPartResult[] {
@@ -612,6 +615,404 @@ function AttemptsTable({ rows }: { rows: NegotiationAttempt[] }) {
   );
 }
 
+// ── DiagnosisFormContent — renders one full diagnosis form (reused for each entry) ────
+
+function DiagnosisFormContent({
+  d,
+  parts,
+  propertyAddress,
+  ticketNo,
+  callerSummary,
+  endReason,
+  ticketBound,
+  showCallInfo,
+}: {
+  d: Record<string, unknown>;
+  parts: PlumbingPartRow[];
+  propertyAddress: string;
+  ticketNo: string;
+  callerSummary?: string;
+  endReason?: string;
+  ticketBound?: boolean;
+  showCallInfo?: boolean;
+}) {
+  const negParts = extractNegParts(d);
+  const laborAttempts = extractNegAttempts(d.labor_negotiation_attempts);
+  const partsAttempts = extractNegAttempts(d.parts_negotiation_attempts);
+
+  const hasLhgBenchmarks =
+    d.lhg_hourly_rate != null || d.lhg_labor != null || d.lhg_parts_total != null ||
+    d.lhg_total != null || d.lhg_labor_ceiling != null || d.lhg_parts_ceiling != null;
+
+  const hasNegContext =
+    d.labor_flag != null || d.follow_up_labor != null || d.within_ceiling != null ||
+    d.acceptable_ceiling != null || d.bundle_lhg_total != null ||
+    d.bundle_tech_parts_total != null || d.bundle_approved != null ||
+    d.follow_up_parts != null || d.unpriced_parts_count != null;
+
+  const hasNegOutcome =
+    d.approved_labor != null || d.approved_parts != null || d.approved_total != null ||
+    d.follow_up_required != null || str(d.negotiation_note);
+
+  return (
+    <>
+      {/* ── Top section — no header ── */}
+      <div className="space-y-0 px-4 py-4">
+        <div className="mb-3 flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={!!toBool(d.calling_for_diagnosis)}
+            readOnly
+            disabled
+            className="h-4 w-4 rounded border-slate-300"
+          />
+          <label className="text-sm font-medium text-slate-700">Calling for Diagnosis</label>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4">
+          <LField label="Company Name" value={str(d.technician_company_only ?? d.technician_company_name)} />
+          <LField label="Category" value="Plumbing" />
+          <LField label="Technician Email" value={str(d.technician_email)} />
+          <LField label="Technician Phone" value={str(d.technician_phone)} />
+          <LField label="Ticket Number" value={ticketNo} />
+          <LField label={`Was the appointment at ${propertyAddress || "[address]"}?`} value="Yes" />
+        </div>
+        {showCallInfo && (
+          <div className="mt-3 grid grid-cols-2 gap-x-4 border-t border-slate-100 pt-3">
+            {endReason && <LField label="End Reason" value={endReason} />}
+            {ticketBound != null && (
+              <LRadio label="Ticket Bound" value={ticketBound} options={["Yes", "No"]} />
+            )}
+            {callerSummary && (
+              <div className="col-span-2">
+                <LField label="Caller Summary" value={callerSummary} as="textarea" />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── COVERED ITEM DETAILS ── */}
+      <section className="mb-0">
+        <div className={SECTION_HDR}>COVERED ITEM DETAILS</div>
+        <div className="border-t-0 border-slate-200 px-4 py-3">
+          <LField label="Description" value={str(d.description)} />
+          <LField label="Location" value={str(d.location)} />
+          <LRadio label="Access required?" value={d.access_required} options={["Yes", "No"]} />
+          {toBool(d.access_required) && (
+            <div className="grid grid-cols-2 gap-x-4">
+              <LField label="Access Price" value={d.access_price != null ? nf(num(d.access_price)) : ""} />
+              <LRadio label="Access Closing Included?" value={d.access_closing_included} options={["Yes", "No"]} />
+            </div>
+          )}
+          <LField label="In your professional opinion, when did this issue begin?" value={str(d.issue_begin)} />
+          <LField label="Malfunction cause" value={str(d.malfunction_cause)} as="select" />
+          <LField label="Condition" value={str(d.condition)} as="select" />
+          {str(d.condition_poor_specify) && (
+            <LField label="Condition — Poor (specify)" value={str(d.condition_poor_specify)} />
+          )}
+          <LField label="Details (Include any issues seen and the scope of work needed)" value={str(d.details)} as="textarea" />
+        </div>
+      </section>
+
+      {/* ── NEXT STEPS ── */}
+      <section>
+        <div className={SECTION_HDR}>NEXT STEPS</div>
+        <div className="border-t-0 border-slate-200 px-4 py-3">
+          <LField label="Next step recommendation" value={str(d.next_step_recommendation)} as="select" />
+        </div>
+      </section>
+
+      {/* ── REPAIR INFORMATION ── */}
+      <section>
+        <div className={SECTION_HDR}>REPAIR INFORMATION</div>
+        <div className="border-t-0 border-slate-200 px-4 py-3">
+          <LRadio label="Parts needed?" value={d.parts_needed} options={["Yes", "No"]} />
+          <p className="mb-2 text-sm font-medium text-slate-700">Labor estimates</p>
+          <div className="mb-3 w-36">
+            <LField label="Labor Cost" value={nf(num(d.labor_total))} />
+          </div>
+          <p className="mb-2 mt-4 text-sm font-medium text-slate-700">Parts for repair</p>
+          <div className="mb-4 overflow-x-auto">
+            <PartsTable rows={parts} readOnly />
+          </div>
+          <div className="mt-6">
+            <div className={SECTION_HDR}>TECHNICIAN&apos;S ESTIMATE</div>
+            <div className="grid grid-cols-2 gap-x-4 border border-t-0 border-slate-200 bg-white px-3 py-3 sm:grid-cols-3">
+              <LField label="Parts" value={nf(num(d.parts_cost_total))} />
+              <LField label="Shipping" value={nf(num(d.shipping_cost))} />
+              <LField label="Tax" value={nf(num(d.tax))} />
+              <LField label="Labor" value={nf(num(d.labor_total))} />
+              <LField label="Parts Total" value={nf(num(d.parts_cost_total))} />
+              <LField label="Parts &amp; Labor" value={nf(num(d.final_total))} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── LHG BENCHMARK VALUES ── */}
+      {hasLhgBenchmarks && (
+        <section>
+          <div className={SECTION_HDR}>LHG BENCHMARK VALUES</div>
+          <div className="grid grid-cols-2 gap-x-4 border-t-0 border-slate-200 px-4 py-3 sm:grid-cols-3">
+            {d.lhg_hourly_rate != null && <LField label="LHG Hourly Rate" value={nf(num(d.lhg_hourly_rate))} />}
+            {d.lhg_labor != null && <LField label="LHG Labor" value={nf(num(d.lhg_labor))} />}
+            {d.lhg_parts_total != null && <LField label="LHG Parts Total" value={nf(num(d.lhg_parts_total))} />}
+            {d.lhg_total != null && <LField label="LHG Total" value={nf(num(d.lhg_total))} />}
+            {d.lhg_labor_ceiling != null && <LField label="LHG Labor Ceiling" value={nf(num(d.lhg_labor_ceiling))} />}
+            {d.lhg_parts_ceiling != null && <LField label="LHG Parts Ceiling" value={nf(num(d.lhg_parts_ceiling))} />}
+          </div>
+        </section>
+      )}
+
+      {/* ── NEGOTIATION CONTEXT ── */}
+      {hasNegContext && (
+        <section>
+          <div className={SECTION_HDR}>NEGOTIATION CONTEXT</div>
+          <div className="grid grid-cols-2 gap-x-4 border-t-0 border-slate-200 px-4 py-3 sm:grid-cols-3">
+            {d.labor_flag != null && <LRadio label="Labor Flag" value={d.labor_flag} options={["Yes", "No"]} />}
+            {d.follow_up_labor != null && <LRadio label="Follow-up Labor" value={d.follow_up_labor} options={["Yes", "No"]} />}
+            {d.within_ceiling != null && <LRadio label="Within Ceiling" value={d.within_ceiling} options={["Yes", "No"]} />}
+            {d.acceptable_ceiling != null && <LField label="Acceptable Ceiling" value={nf(num(d.acceptable_ceiling))} />}
+            {d.bundle_lhg_total != null && <LField label="Bundle LHG Total" value={nf(num(d.bundle_lhg_total))} />}
+            {d.bundle_tech_parts_total != null && <LField label="Bundle Tech Parts Total" value={nf(num(d.bundle_tech_parts_total))} />}
+            {d.bundle_approved != null && <LRadio label="Bundle Approved" value={d.bundle_approved} options={["Yes", "No"]} />}
+            {d.follow_up_parts != null && <LRadio label="Follow-up Parts" value={d.follow_up_parts} options={["Yes", "No"]} />}
+            {d.unpriced_parts_count != null && <LField label="Unpriced Parts Count" value={num(d.unpriced_parts_count)} />}
+          </div>
+        </section>
+      )}
+
+      {/* ── NEGOTIATION OUTCOME ── */}
+      {hasNegOutcome && (
+        <section>
+          <div className={SECTION_HDR}>NEGOTIATION OUTCOME</div>
+          <div className="border-t-0 border-slate-200 px-4 py-3">
+            <div className="grid grid-cols-2 gap-x-4 sm:grid-cols-3">
+              {d.approved_labor != null && <LField label="Approved Labor" value={nf(num(d.approved_labor))} />}
+              {d.approved_parts != null && <LField label="Approved Parts" value={nf(num(d.approved_parts))} />}
+              {d.approved_total != null && <LField label="Approved Total" value={nf(num(d.approved_total))} />}
+            </div>
+            {d.follow_up_required != null && (
+              <LRadio label="Follow-up Required" value={d.follow_up_required} options={["Yes", "No"]} />
+            )}
+            {str(d.negotiation_note) && (
+              <LField label="Negotiation Note" value={str(d.negotiation_note)} as="textarea" />
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── PARTS NEGOTIATION RESULTS ── */}
+      {negParts.length > 0 && (
+        <section>
+          <div className={SECTION_HDR}>PARTS NEGOTIATION RESULTS</div>
+          <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <th className="px-2 py-2">Part Name</th>
+                  <th className="px-2 py-2">LHG Price</th>
+                  <th className="px-2 py-2">Tech Price</th>
+                  <th className="px-2 py-2">Tier Max</th>
+                  <th className="px-2 py-2">Within Tier</th>
+                  <th className="px-2 py-2">Approved Price</th>
+                  <th className="px-2 py-2">Weight %</th>
+                  <th className="px-2 py-2">Auto Approved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {negParts.map((p, i) => (
+                  <tr key={i} className="border-b border-slate-100 even:bg-slate-50">
+                    <td className="px-2 py-2 text-slate-800">{p.name || "—"}</td>
+                    <td className="px-2 py-2 text-slate-800">${nf(p.lhg_price)}</td>
+                    <td className="px-2 py-2 text-slate-800">${nf(p.tech_price)}</td>
+                    <td className="px-2 py-2 text-slate-800">${nf(p.tier_max)}</td>
+                    <td className="px-2 py-2">
+                      {p.within_tier == null ? "—" : p.within_tier ? (
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">Yes</span>
+                      ) : (
+                        <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-600">No</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-slate-800">
+                      {p.approved_part_price == null ? (
+                        <span className="italic text-slate-400">Unresolved</span>
+                      ) : (
+                        `$${nf(p.approved_part_price)}`
+                      )}
+                    </td>
+                    <td className="px-2 py-2 text-slate-800">
+                      {p.weight_pct != null ? `${nf(p.weight_pct)}%` : "—"}
+                    </td>
+                    <td className="px-2 py-2">
+                      {p.auto_approved == null ? "—" : p.auto_approved ? (
+                        <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">Yes</span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500">No</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ── LABOR NEGOTIATION ATTEMPTS ── */}
+      {laborAttempts.length > 0 && (
+        <section>
+          <div className={SECTION_HDR}>LABOR NEGOTIATION ATTEMPTS</div>
+          <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
+            <AttemptsTable rows={laborAttempts} />
+          </div>
+        </section>
+      )}
+
+      {/* ── PARTS NEGOTIATION ATTEMPTS ── */}
+      {partsAttempts.length > 0 && (
+        <section>
+          <div className={SECTION_HDR}>PARTS NEGOTIATION ATTEMPTS</div>
+          <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
+            <AttemptsTable rows={partsAttempts} />
+          </div>
+        </section>
+      )}
+
+      {/* ── CLAIM ACTIONS ── */}
+      <section>
+        <div className={SECTION_HDR}>CLAIM ACTIONS</div>
+        <div className="border-t-0 border-slate-200 px-4 py-3">
+          <LRadio label="Live resolution requested" value={d.enable_live_resolution} options={["Yes", "No"]} />
+          <LRadio label="Is the technician onsite?" value={d.is_technician_onsite} options={["Yes", "No"]} />
+          <LRadio label="Is the customer onsite?" value={d.is_customer_onsite} options={["Yes", "No"]} />
+          <LField label="Is the technician willing to waive their service call fee?" value={str(d.waive_service_call_fee)} />
+          <LField label="Change task status" value={str(d.change_task_status)} as="select" />
+          <LField label="Note" value={str(d.note)} as="textarea" />
+        </div>
+      </section>
+    </>
+  );
+}
+
+// ── DiagnosisAccordion — card list + expandable form per diagnosis ────────────
+
+type EntryShape = {
+  diagnosis_id?: string;
+  is_primary?: boolean;
+  saved_at?: string;
+  plumbingDiagnostic?: Record<string, unknown>;
+  plumbingParts?: unknown[];
+};
+
+function DiagnosisAccordion({
+  sorted,
+  propertyAddress,
+  ticketNo,
+  callerSummary,
+  endReason,
+  ticketBound,
+  hasCallInfo,
+  onClose,
+}: {
+  sorted: EntryShape[];
+  propertyAddress: string;
+  ticketNo: string;
+  callerSummary: string;
+  endReason: string;
+  ticketBound: boolean | undefined;
+  hasCallInfo: boolean;
+  onClose: () => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  return (
+    <div className="p-6">
+      <div className="space-y-3">
+        {sorted.map((entry, idx) => {
+          const id = entry.diagnosis_id ?? String(idx);
+          const isOpen = openId === id;
+          const dateStr = entry.saved_at
+            ? new Date(entry.saved_at).toLocaleString(undefined, {
+                month: "short", day: "numeric", year: "numeric",
+                hour: "numeric", minute: "2-digit",
+              })
+            : "—";
+          const d = (entry.plumbingDiagnostic ?? {}) as Record<string, unknown>;
+          const parts = mapPartsArray((entry.plumbingParts ?? []) as unknown[]);
+
+          return (
+            <div key={id}>
+              {/* ── Clickable card ── */}
+              <button
+                type="button"
+                onClick={() => setOpenId(isOpen ? null : id)}
+                className={`w-full rounded-lg border px-4 py-3 text-left transition-colors ${
+                  isOpen
+                    ? "border-teal-600/60 bg-teal-900/20"
+                    : "border-neutral-700 bg-neutral-800/50 hover:bg-neutral-800"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {entry.is_primary && (
+                      <span className="shrink-0 rounded border border-teal-700/60 bg-teal-900/40 px-2 py-0.5 text-xs font-medium text-teal-300">
+                        Primary
+                      </span>
+                    )}
+                    <span className="truncate text-sm font-medium text-white">
+                      {entry.diagnosis_id ?? `Diagnosis ${idx + 1}`}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="text-xs text-neutral-400">{dateStr}</span>
+                    <svg
+                      className={`h-4 w-4 text-neutral-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
+                </div>
+              </button>
+
+              {/* ── Expanded form ── */}
+              {isOpen && (
+                <div className="mt-2 overflow-hidden rounded-lg bg-white shadow-sm">
+                  <DiagnosisFormContent
+                    d={d}
+                    parts={parts}
+                    propertyAddress={propertyAddress}
+                    ticketNo={ticketNo}
+                    callerSummary={idx === 0 ? callerSummary : undefined}
+                    endReason={idx === 0 ? endReason : undefined}
+                    ticketBound={idx === 0 ? ticketBound : undefined}
+                    showCallInfo={idx === 0 && hasCallInfo}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex justify-end">
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700"
+        >
+          CLOSE
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── DiagnosticTab ─────────────────────────────────────────────────────────────
+
 function DiagnosticTab({
   diagRecord,
   diagLoading,
@@ -646,400 +1047,58 @@ function DiagnosticTab({
     );
   }
 
-  const d = extractPD(diagRecord);
-  const at = (diagRecord.activeTicket ?? diagRecord.active_ticket) as
-    | Record<string, unknown>
-    | undefined;
+  const at = (diagRecord.activeTicket ?? diagRecord.active_ticket) as Record<string, unknown> | undefined;
   const propertyAddress = str(at?.propertyAddress ?? at?.property_address);
-  const parts = extractParts(diagRecord);
-  const negParts = extractNegParts(d);
-  const laborAttempts = extractNegAttempts(d.labor_negotiation_attempts);
-  const partsAttempts = extractNegAttempts(d.parts_negotiation_attempts);
-
   const callerSummary = str(diagRecord.callerSummary ?? diagRecord.caller_summary);
   const endReason = str(diagRecord.endReason ?? diagRecord.end_reason);
-  const ticketBound = diagRecord.ticketBound != null
-    ? toBool(diagRecord.ticketBound)
-    : undefined;
-
+  const ticketBound = diagRecord.ticketBound != null ? toBool(diagRecord.ticketBound) : undefined;
   const hasCallInfo = !!(callerSummary || endReason || ticketBound != null);
-  const hasLhgBenchmarks =
-    d.lhg_hourly_rate != null ||
-    d.lhg_labor != null ||
-    d.lhg_parts_total != null ||
-    d.lhg_total != null ||
-    d.lhg_labor_ceiling != null ||
-    d.lhg_parts_ceiling != null;
 
-  const hasNegContext =
-    d.labor_flag != null ||
-    d.follow_up_labor != null ||
-    d.within_ceiling != null ||
-    d.acceptable_ceiling != null ||
-    d.bundle_lhg_total != null ||
-    d.bundle_tech_parts_total != null ||
-    d.bundle_approved != null ||
-    d.follow_up_parts != null ||
-    d.unpriced_parts_count != null;
+  // ── Multi-diagnosis path ──────────────────────────────────────────────────
+  const diagnosesRaw = Array.isArray(diagRecord.diagnoses)
+    ? (diagRecord.diagnoses as EntryShape[])
+    : null;
 
-  const hasNegOutcome =
-    d.approved_labor != null ||
-    d.approved_parts != null ||
-    d.approved_total != null ||
-    d.follow_up_required != null ||
-    str(d.negotiation_note);
+  if (diagnosesRaw && diagnosesRaw.length > 0) {
+    const sorted = [...diagnosesRaw].sort((a, b) => {
+      if (a.is_primary && !b.is_primary) return -1;
+      if (!a.is_primary && b.is_primary) return 1;
+      const aDate = a.saved_at ?? "";
+      const bDate = b.saved_at ?? "";
+      return aDate < bDate ? -1 : aDate > bDate ? 1 : 0;
+    });
+
+    return (
+      <DiagnosisAccordion
+        sorted={sorted}
+        propertyAddress={propertyAddress}
+        ticketNo={ticketNo}
+        callerSummary={callerSummary}
+        endReason={endReason}
+        ticketBound={ticketBound}
+        hasCallInfo={hasCallInfo}
+        onClose={onClose}
+      />
+    );
+  }
+
+  // ── Single-diagnosis fallback (original behaviour, no diagnoses array) ────
+  const d = extractPD(diagRecord);
+  const parts = extractParts(diagRecord);
 
   return (
     <div className="p-6">
       <div className="overflow-hidden rounded-lg bg-white shadow-sm">
-        {/* ── Top section — no header ── */}
-        <div className="space-y-0 px-4 py-4">
-          <div className="mb-3 flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!toBool(d.calling_for_diagnosis)}
-              readOnly
-              disabled
-              className="h-4 w-4 rounded border-slate-300"
-            />
-            <label className="text-sm font-medium text-slate-700">Calling for Diagnosis</label>
-          </div>
-          <div className="grid grid-cols-2 gap-x-4">
-            <LField
-              label="Company Name"
-              value={str(d.technician_company_only ?? d.technician_company_name)}
-            />
-            <LField label="Category" value="Plumbing" />
-            <LField label="Technician Email" value={str(d.technician_email)} />
-            <LField label="Technician Phone" value={str(d.technician_phone)} />
-            <LField
-              label="Ticket Number"
-              value={str(diagRecord.ticketNo ?? ticketNo)}
-            />
-            <LField
-              label={`Was the appointment at ${propertyAddress || "[address]"}?`}
-              value="Yes"
-            />
-          </div>
-          {hasCallInfo && (
-            <div className="mt-3 grid grid-cols-2 gap-x-4 border-t border-slate-100 pt-3">
-              {endReason && <LField label="End Reason" value={endReason} />}
-              {ticketBound != null && (
-                <LRadio label="Ticket Bound" value={ticketBound} options={["Yes", "No"]} />
-              )}
-              {callerSummary && (
-                <div className="col-span-2">
-                  <LField label="Caller Summary" value={callerSummary} as="textarea" />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ── COVERED ITEM DETAILS ── */}
-        <section className="mb-0">
-          <div className={SECTION_HDR}>COVERED ITEM DETAILS</div>
-          <div className="border-t-0 border-slate-200 px-4 py-3">
-            <LField label="Description" value={str(d.description)} />
-            <LField label="Location" value={str(d.location)} />
-            <LRadio label="Access required?" value={d.access_required} options={["Yes", "No"]} />
-            {toBool(d.access_required) && (
-              <div className="grid grid-cols-2 gap-x-4">
-                <LField
-                  label="Access Price"
-                  value={d.access_price != null ? nf(num(d.access_price)) : ""}
-                />
-                <LRadio
-                  label="Access Closing Included?"
-                  value={d.access_closing_included}
-                  options={["Yes", "No"]}
-                />
-              </div>
-            )}
-            <LField
-              label="In your professional opinion, when did this issue begin?"
-              value={str(d.issue_begin)}
-            />
-            <LField label="Malfunction cause" value={str(d.malfunction_cause)} as="select" />
-            <LField label="Condition" value={str(d.condition)} as="select" />
-            {str(d.condition_poor_specify) && (
-              <LField
-                label="Condition — Poor (specify)"
-                value={str(d.condition_poor_specify)}
-              />
-            )}
-            <LField
-              label="Details (Include any issues seen and the scope of work needed)"
-              value={str(d.details)}
-              as="textarea"
-            />
-          </div>
-        </section>
-
-        {/* ── NEXT STEPS ── */}
-        <section>
-          <div className={SECTION_HDR}>NEXT STEPS</div>
-          <div className="border-t-0 border-slate-200 px-4 py-3">
-            <LField
-              label="Next step recommendation"
-              value={str(d.next_step_recommendation)}
-              as="select"
-            />
-          </div>
-        </section>
-
-        {/* ── REPAIR INFORMATION ── */}
-        <section>
-          <div className={SECTION_HDR}>REPAIR INFORMATION</div>
-          <div className="border-t-0 border-slate-200 px-4 py-3">
-            <LRadio label="Parts needed?" value={d.parts_needed} options={["Yes", "No"]} />
-            <p className="mb-2 text-sm font-medium text-slate-700">Labor estimates</p>
-            <div className="mb-3 w-36">
-              <LField label="Labor Cost" value={nf(num(d.labor_total))} />
-            </div>
-            <p className="mb-2 mt-4 text-sm font-medium text-slate-700">Parts for repair</p>
-            <div className="mb-4 overflow-x-auto">
-              <PartsTable rows={parts} readOnly />
-            </div>
-            {/* Technician's Estimate subsection */}
-            <div className="mt-6">
-              <div className={SECTION_HDR}>TECHNICIAN&apos;S ESTIMATE</div>
-              <div className="grid grid-cols-2 gap-x-4 border border-t-0 border-slate-200 bg-white px-3 py-3 sm:grid-cols-3">
-                <LField label="Parts" value={nf(num(d.parts_cost_total))} />
-                <LField label="Shipping" value={nf(num(d.shipping_cost))} />
-                <LField label="Tax" value={nf(num(d.tax))} />
-                <LField label="Labor" value={nf(num(d.labor_total))} />
-                <LField label="Parts Total" value={nf(num(d.parts_cost_total))} />
-                <LField label="Parts &amp; Labor" value={nf(num(d.final_total))} />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* ── LHG BENCHMARK VALUES ── */}
-        {hasLhgBenchmarks && (
-          <section>
-            <div className={SECTION_HDR}>LHG BENCHMARK VALUES</div>
-            <div className="grid grid-cols-2 gap-x-4 border-t-0 border-slate-200 px-4 py-3 sm:grid-cols-3">
-              {d.lhg_hourly_rate != null && (
-                <LField label="LHG Hourly Rate" value={nf(num(d.lhg_hourly_rate))} />
-              )}
-              {d.lhg_labor != null && (
-                <LField label="LHG Labor" value={nf(num(d.lhg_labor))} />
-              )}
-              {d.lhg_parts_total != null && (
-                <LField label="LHG Parts Total" value={nf(num(d.lhg_parts_total))} />
-              )}
-              {d.lhg_total != null && (
-                <LField label="LHG Total" value={nf(num(d.lhg_total))} />
-              )}
-              {d.lhg_labor_ceiling != null && (
-                <LField label="LHG Labor Ceiling" value={nf(num(d.lhg_labor_ceiling))} />
-              )}
-              {d.lhg_parts_ceiling != null && (
-                <LField label="LHG Parts Ceiling" value={nf(num(d.lhg_parts_ceiling))} />
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* ── NEGOTIATION CONTEXT ── */}
-        {hasNegContext && (
-          <section>
-            <div className={SECTION_HDR}>NEGOTIATION CONTEXT</div>
-            <div className="grid grid-cols-2 gap-x-4 border-t-0 border-slate-200 px-4 py-3 sm:grid-cols-3">
-              {d.labor_flag != null && (
-                <LRadio label="Labor Flag" value={d.labor_flag} options={["Yes", "No"]} />
-              )}
-              {d.follow_up_labor != null && (
-                <LRadio
-                  label="Follow-up Labor"
-                  value={d.follow_up_labor}
-                  options={["Yes", "No"]}
-                />
-              )}
-              {d.within_ceiling != null && (
-                <LRadio
-                  label="Within Ceiling"
-                  value={d.within_ceiling}
-                  options={["Yes", "No"]}
-                />
-              )}
-              {d.acceptable_ceiling != null && (
-                <LField label="Acceptable Ceiling" value={nf(num(d.acceptable_ceiling))} />
-              )}
-              {d.bundle_lhg_total != null && (
-                <LField label="Bundle LHG Total" value={nf(num(d.bundle_lhg_total))} />
-              )}
-              {d.bundle_tech_parts_total != null && (
-                <LField
-                  label="Bundle Tech Parts Total"
-                  value={nf(num(d.bundle_tech_parts_total))}
-                />
-              )}
-              {d.bundle_approved != null && (
-                <LRadio
-                  label="Bundle Approved"
-                  value={d.bundle_approved}
-                  options={["Yes", "No"]}
-                />
-              )}
-              {d.follow_up_parts != null && (
-                <LRadio
-                  label="Follow-up Parts"
-                  value={d.follow_up_parts}
-                  options={["Yes", "No"]}
-                />
-              )}
-              {d.unpriced_parts_count != null && (
-                <LField label="Unpriced Parts Count" value={num(d.unpriced_parts_count)} />
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* ── NEGOTIATION OUTCOME ── */}
-        {hasNegOutcome && (
-          <section>
-            <div className={SECTION_HDR}>NEGOTIATION OUTCOME</div>
-            <div className="border-t-0 border-slate-200 px-4 py-3">
-              <div className="grid grid-cols-2 gap-x-4 sm:grid-cols-3">
-                {d.approved_labor != null && (
-                  <LField label="Approved Labor" value={nf(num(d.approved_labor))} />
-                )}
-                {d.approved_parts != null && (
-                  <LField label="Approved Parts" value={nf(num(d.approved_parts))} />
-                )}
-                {d.approved_total != null && (
-                  <LField label="Approved Total" value={nf(num(d.approved_total))} />
-                )}
-              </div>
-              {d.follow_up_required != null && (
-                <LRadio
-                  label="Follow-up Required"
-                  value={d.follow_up_required}
-                  options={["Yes", "No"]}
-                />
-              )}
-              {str(d.negotiation_note) && (
-                <LField label="Negotiation Note" value={str(d.negotiation_note)} as="textarea" />
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* ── PARTS NEGOTIATION RESULTS ── */}
-        {negParts.length > 0 && (
-          <section>
-            <div className={SECTION_HDR}>PARTS NEGOTIATION RESULTS</div>
-            <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    <th className="px-2 py-2">Part Name</th>
-                    <th className="px-2 py-2">LHG Price</th>
-                    <th className="px-2 py-2">Tech Price</th>
-                    <th className="px-2 py-2">Tier Max</th>
-                    <th className="px-2 py-2">Within Tier</th>
-                    <th className="px-2 py-2">Approved Price</th>
-                    <th className="px-2 py-2">Weight %</th>
-                    <th className="px-2 py-2">Auto Approved</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {negParts.map((p, i) => (
-                    <tr key={i} className="border-b border-slate-100 even:bg-slate-50">
-                      <td className="px-2 py-2 text-slate-800">{p.name || "—"}</td>
-                      <td className="px-2 py-2 text-slate-800">${nf(p.lhg_price)}</td>
-                      <td className="px-2 py-2 text-slate-800">${nf(p.tech_price)}</td>
-                      <td className="px-2 py-2 text-slate-800">${nf(p.tier_max)}</td>
-                      <td className="px-2 py-2">
-                        {p.within_tier == null ? (
-                          "—"
-                        ) : p.within_tier ? (
-                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">
-                            Yes
-                          </span>
-                        ) : (
-                          <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-600">
-                            No
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-2 text-slate-800">
-                        {p.approved_part_price == null ? (
-                          <span className="italic text-slate-400">Unresolved</span>
-                        ) : (
-                          `$${nf(p.approved_part_price)}`
-                        )}
-                      </td>
-                      <td className="px-2 py-2 text-slate-800">
-                        {p.weight_pct != null ? `${nf(p.weight_pct)}%` : "—"}
-                      </td>
-                      <td className="px-2 py-2">
-                        {p.auto_approved == null ? "—" : p.auto_approved ? (
-                          <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700">Yes</span>
-                        ) : (
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500">No</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {/* ── LABOR NEGOTIATION ATTEMPTS ── */}
-        {laborAttempts.length > 0 && (
-          <section>
-            <div className={SECTION_HDR}>LABOR NEGOTIATION ATTEMPTS</div>
-            <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
-              <AttemptsTable rows={laborAttempts} />
-            </div>
-          </section>
-        )}
-
-        {/* ── PARTS NEGOTIATION ATTEMPTS ── */}
-        {partsAttempts.length > 0 && (
-          <section>
-            <div className={SECTION_HDR}>PARTS NEGOTIATION ATTEMPTS</div>
-            <div className="overflow-x-auto border-t-0 border-slate-200 px-4 py-3">
-              <AttemptsTable rows={partsAttempts} />
-            </div>
-          </section>
-        )}
-
-        {/* ── CLAIM ACTIONS ── */}
-        <section>
-          <div className={SECTION_HDR}>CLAIM ACTIONS</div>
-          <div className="border-t-0 border-slate-200 px-4 py-3">
-            <LRadio
-              label="Live resolution requested"
-              value={d.enable_live_resolution}
-              options={["Yes", "No"]}
-            />
-            <LRadio
-              label="Is the technician onsite?"
-              value={d.is_technician_onsite}
-              options={["Yes", "No"]}
-            />
-            <LRadio
-              label="Is the customer onsite?"
-              value={d.is_customer_onsite}
-              options={["Yes", "No"]}
-            />
-            <LField
-              label="Is the technician willing to waive their service call fee?"
-              value={str(d.waive_service_call_fee)}
-            />
-            <LField label="Change task status" value={str(d.change_task_status)} as="select" />
-            <LField label="Note" value={str(d.note)} as="textarea" />
-          </div>
-        </section>
-
-        {/* ── Footer / CLOSE ── */}
+        <DiagnosisFormContent
+          d={d}
+          parts={parts}
+          propertyAddress={propertyAddress}
+          ticketNo={ticketNo}
+          callerSummary={callerSummary}
+          endReason={endReason}
+          ticketBound={ticketBound}
+          showCallInfo={hasCallInfo}
+        />
         <div className="flex justify-end border-t border-slate-200 bg-slate-50 px-4 py-3">
           <button
             type="button"

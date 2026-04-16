@@ -48,6 +48,7 @@ export type DiagnosticRecord = {
   };
   plumbingDiagnostic: PlumbingDiagnostic;
   plumbingParts: PlumbingPartRow[];
+  diagnoses?: DiagnosisEntry[];
   selectedTechnician?: Record<string, unknown>;
 };
 
@@ -121,4 +122,13 @@ export type PlumbingPartRow = {
   quantity?: number;
   tech_price?: number;
   location_of_repair?: string;
+};
+
+/** Single diagnosis entry inside the diagnoses array */
+export type DiagnosisEntry = {
+  diagnosis_id: string;
+  is_primary: boolean;
+  saved_at: string;
+  plumbingDiagnostic: PlumbingDiagnostic;
+  plumbingParts: PlumbingPartRow[];
 };
