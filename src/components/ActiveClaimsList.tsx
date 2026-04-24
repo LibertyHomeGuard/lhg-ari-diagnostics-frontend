@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import type { ActiveClaimRow } from "../types/diagnostics";
 import {
   fetchDiagnosticsUpdates,
@@ -147,12 +147,17 @@ export default function ActiveClaimsList() {
   const groupedFiltered = useMemo<ClaimGroup[]>(() => {
     const map = new Map<string, ActiveClaimRow[]>();
     for (const claim of filtered) {
-      const key = claim.callerNumber ?? claim.ticketNo;
+      const pd = extractPD(diagRecordByTicket[claim.ticketNo]);
+      // Top-level pd may be empty for some records; fall back to techPhoneByTicket
+      // which also captures phones stored in diagnoses[0].plumbingDiagnostic
+      const techPhone =
+        s(pd.technician_phone as unknown) || (techPhoneByTicket[claim.ticketNo] ?? "");
+      const key = techPhone || claim.callerNumber || claim.ticketNo;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(claim);
     }
     return Array.from(map.entries()).map(([key, tickets]) => ({ key, tickets }));
-  }, [filtered]);
+  }, [filtered, diagRecordByTicket, techPhoneByTicket]);
 
   // ── Derived selected-ticket data ──────────────────────────────────────────
   const selectedGroup = groupedFiltered.find((g) => g.key === selectedGroupKey) ?? null;
@@ -186,7 +191,7 @@ export default function ActiveClaimsList() {
       );
       if (maxMs > 0) setMaxSavedAtMs(maxMs);
       if (newRows.length > 0) {
-        setSelectedGroupKey((prev) => prev ?? (newRows[0].callerNumber ?? newRows[0].ticketNo));
+        setSelectedGroupKey((prev) => prev ?? newRows[0].ticketNo);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load updates");
@@ -208,7 +213,10 @@ export default function ActiveClaimsList() {
         const pd = (record.plumbingDiagnostic ?? record.plumbing_diagnostic) as
           | Record<string, unknown>
           | undefined;
-        const raw = pd?.technician_phone;
+        // technician_phone may live in the nested diagnoses array instead of top-level pd
+        const diagnoses = record.diagnoses as Array<Record<string, unknown>> | undefined;
+        const fallbackPd = diagnoses?.[0]?.plumbingDiagnostic as Record<string, unknown> | undefined;
+        const raw = pd?.technician_phone ?? fallbackPd?.technician_phone;
         const phone =
           typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
         if (phone) setTechPhoneByTicket((prev) => ({ ...prev, [ticketNo]: phone }));
@@ -282,6 +290,15 @@ export default function ActiveClaimsList() {
     },
     []
   );
+
+  // Always-current ref so the preload effect never captures a stale closure
+  const ensureDiagLoadedRef = useRef(ensureDiagLoaded);
+  useEffect(() => { ensureDiagLoadedRef.current = ensureDiagLoaded; });
+
+  // Preload diagnostic records for every claim so grouping resolves automatically
+  useEffect(() => {
+    claims.forEach((claim) => ensureDiagLoadedRef.current(claim.ticketNo));
+  }, [claims]);
 
   // ── Load data whenever active ticket changes ──────────────────────────────
   useEffect(() => {
